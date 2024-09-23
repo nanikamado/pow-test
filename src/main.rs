@@ -1,5 +1,6 @@
 use pollster::block_on;
 use wgpu::util::DeviceExt;
+use wgpu::PowerPreference;
 
 async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
     // Load the shader code
@@ -7,10 +8,9 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
 
     // Request the GPU adapter and device
     let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions::default())
-        .await
-        .unwrap();
+    let mut wgpu_options = wgpu::RequestAdapterOptions::default();
+    wgpu_options.power_preference = PowerPreference::HighPerformance;
+    let adapter = instance.request_adapter(&wgpu_options).await.unwrap();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor::default(), None)
         .await
