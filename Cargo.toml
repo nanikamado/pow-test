@@ -1,0 +1,11 @@
+[package]
+name = "pow-test"
+version = "0.1.0"
+edition = "2021"
+
+# In Cargo.toml
+[dependencies]
+wgpu = "22.1.0"
+winit = "0.30.5" # For creating a GPU instance if necessary
+pollster = "0.3" # For blocking on async
+bytemuck = "1.18.0"
