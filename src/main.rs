@@ -68,7 +68,7 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
             }),
         ),
         module: &shader_module,
-        entry_point: "main",
+        entry_point: Some("main"),
         label: None,
         compilation_options: Default::default(),
         cache: None,
@@ -160,32 +160,52 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
 
         // Await results
         let buffer_slice = staging_buffer.slice(..);
-        buffer_slice.map_async(wgpu::MapMode::Read, |a| {
-            a.unwrap();
-        });
-        device.poll(wgpu::Maintain::Wait);
-        let data = buffer_slice.get_mapped_range();
-        let result_data: &[u8] = bytemuck::cast_slice(&data);
+        let (sender, receiver) = flume::bounded(1);
+        buffer_slice.map_async(wgpu::MapMode::Read, move |a| sender.send(a).unwrap());
+        device.poll(wgpu::Maintain::Wait).panic_on_timeout();
+        if let Ok(Ok(())) = receiver.recv_async().await {
+            // Gets contents of buffer
+            // let data = buffer_slice.get_mapped_range();
+            // // Since contents are got in bytes, this converts these bytes back to u32
+            // let result = bytemuck::cast_slice(&data).to_vec();
 
-        let index_of_max_value = result_data
-            .iter()
-            .enumerate()
-            .max_by_key(|&(_, &x)| x)
-            .map(|(index, _)| index)
-            .unwrap();
+            // // With the current interface, we have to make sure all mapped views are
+            // // dropped before we unmap the buffer.
+            // drop(data);
+            // staging_buffer.unmap(); // Unmaps buffer from memory
+            //                         // If you are familiar with C++ these 2 lines can be thought of similarly to:
+            //                         //   delete myPointer;
+            //                         //   myPointer = NULL;
+            //                         // It effectively frees the memory
 
-        if result_data[index_of_max_value] > max_diff {
-            max_diff = result_data[index_of_max_value];
-            max_result = format!(
-                "{}-{}",
-                i,
-                index_of_max_value
-                    .to_string()
-                    .chars()
-                    .rev()
-                    .collect::<String>()
-            );
-            println!("Current: {}, Diff: {}", max_result, max_diff);
+            // Returns data from buffer
+            let data = buffer_slice.get_mapped_range();
+            let result_data: Vec<u8> = bytemuck::cast_slice(&data).to_vec();
+            drop(data);
+            staging_buffer.unmap();
+            // eprintln!("result_data = {result_data:?}");
+
+            let index_of_max_value = result_data
+                .iter()
+                .enumerate()
+                .max_by_key(|&(_, &x)| x)
+                .map(|(index, _)| index)
+                .unwrap();
+
+            if result_data[index_of_max_value] > max_diff {
+                max_diff = result_data[index_of_max_value];
+                max_result = format!(
+                    "{}-{}",
+                    i,
+                    format!("{:0>10}", index_of_max_value)
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                );
+                println!("Current: {}, Diff: {}", max_result, max_diff);
+            }
+        } else {
+            panic!("failed to run compute on gpu!")
         }
     }
 

@@ -72,7 +72,6 @@ fn sha256_transform(ctx: ptr<function, SHA256_CTX>) {
     g = (*ctx).state[6];
     h = (*ctx).state[7];
 
-    // for Deno bug
     var k = array<u32, 64>(
         0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
         0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
@@ -114,9 +113,9 @@ fn sha256_push(ctx: ptr<function, SHA256_CTX>, n: u32) {
         if (*ctx).datalen == 64u {
             sha256_transform(ctx);
 
-            if (*ctx).bitlen[0] > 0xffffffffu - (512u) {
-                (*ctx).bitlen[1]++;
-            }
+            // if (*ctx).bitlen[0] > 0xffffffffu - (512u) {
+            //     (*ctx).bitlen[1]++;
+            // }
             (*ctx).bitlen[0] += 512u;
 
 
@@ -130,7 +129,7 @@ fn sha256_update(ctx: ptr<function, SHA256_CTX>, len: u32) {
     }
 }
 
-fn sha256_final(ctx: ptr<function, SHA256_CTX>, hash: ptr<function, array<u32, SHA256_BLOCK_SIZE>>) {
+fn sha256_final(ctx: ptr<function, SHA256_CTX>) {
     var i: u32 = (*ctx).datalen;
 
     if (*ctx).datalen < 56u {
@@ -148,15 +147,15 @@ fn sha256_final(ctx: ptr<function, SHA256_CTX>, hash: ptr<function, array<u32, S
             i++;
         }
         sha256_transform(ctx);
-        for (var i = 0; i < 56 ; i++) {
+        for (i = 0u; i < 56u ; i++) {
             (*ctx).data[i] = 0u;
         }
     }
 
 
-    if (*ctx).bitlen[0] > 0xffffffffu - (*ctx).datalen * 8u {
-        (*ctx).bitlen[1]++;
-    }
+    // if (*ctx).bitlen[0] > 0xffffffffu - (*ctx).datalen * 8u {
+    //     (*ctx).bitlen[1]++;
+    // }
     (*ctx).bitlen[0] += (*ctx).datalen * 8u;
 
 
@@ -164,16 +163,16 @@ fn sha256_final(ctx: ptr<function, SHA256_CTX>, hash: ptr<function, array<u32, S
     (*ctx).data[62] = (*ctx).bitlen[0] >> 8u;
     (*ctx).data[61] = (*ctx).bitlen[0] >> 16u;
     (*ctx).data[60] = (*ctx).bitlen[0] >> 24u;
-    (*ctx).data[59] = (*ctx).bitlen[1];
-    (*ctx).data[58] = (*ctx).bitlen[1] >> 8u;
-    (*ctx).data[57] = (*ctx).bitlen[1] >> 16u;
-    (*ctx).data[56] = (*ctx).bitlen[1] >> 24u;
+    // (*ctx).data[59] = (*ctx).bitlen[1];
+    // (*ctx).data[58] = (*ctx).bitlen[1] >> 8u;
+    // (*ctx).data[57] = (*ctx).bitlen[1] >> 16u;
+    // (*ctx).data[56] = (*ctx).bitlen[1] >> 24u;
     sha256_transform(ctx);
 }
 
 fn push_string(ctx: ptr<function, SHA256_CTX>, n: u32) {
   var m = n;
-  while m > 0u {
+  for (var i = 0u; i < 10u; i++) {
     sha256_push(ctx, m % 10u + 48u);
     m /= 10u;
   }
@@ -192,15 +191,28 @@ fn leading_zeros(ctx: ptr<function, SHA256_CTX>) -> u32 {
     return zeros;
 }
 
+fn copy_ctx(ctx_dist: ptr<function, SHA256_CTX>, ctx_src: ptr<function, SHA256_CTX>) {
+    var i: u32;
+    for (i = 0u; i < 64u; i++) {
+        (*ctx_dist).data[i] = (*ctx_src).data[i];
+    }
+    (*ctx_dist).datalen = (*ctx_src).datalen;
+    (*ctx_dist).bitlen[0] = (*ctx_src).bitlen[0];
+    for (i = 0u; i < 8u; i++) {
+        (*ctx_dist).state[i] = (*ctx_src).state[i];
+    }
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var ctx: SHA256_CTX;
-    var buf: array<u32, SHA256_BLOCK_SIZE>;
+    // var ctx_copy: SHA256_CTX;
+    // var buf: array<u32, SHA256_BLOCK_SIZE>;
 
     // CTX INIT
     ctx.datalen = 0u;
     ctx.bitlen[0] = 0u;
-    ctx.bitlen[1] = 0u;
+    // ctx.bitlen[1] = 0u;
     ctx.state[0] = 0x6a09e667u;
     ctx.state[1] = 0xbb67ae85u;
     ctx.state[2] = 0x3c6ef372u;
@@ -214,6 +226,21 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     sha256_update(&ctx, inputSize[0]);
     push_string(&ctx, i);
-    sha256_final(&ctx, &buf);
+    sha256_final(&ctx);
     result[i / 4] |= leading_zeros(&ctx) << (i % 4) * 8;
+    // // sha256_push(&ctx, 58u);
+    
+    // var m = 0u;
+    // for (var j = 0u; j < 16; j++) {
+    //   // ctx_copy = ctx;
+    //   copy_ctx(&ctx_copy, &ctx);
+    //   // push_string(&ctx, j);
+    //   sha256_final(&ctx);
+    //   let n = leading_zeros(&ctx);
+    //   if n > m {
+    //     m = n;
+    //   }
+    // }
+    
+    // result[i / 4] |= n << ((i % 4) * 8);
 }
