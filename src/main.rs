@@ -1,8 +1,12 @@
+mod sha256;
+
 use pollster::block_on;
+use sha256::{sha256_push, Sha256Ctx};
 use wgpu::util::DeviceExt;
 use wgpu::PowerPreference;
 
-async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
+async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error> {
+    let suffix = format!(":{suffix}");
     // Load the shader code
     let shader_code = include_str!("./sha256.wgsl");
 
@@ -43,6 +47,16 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -77,9 +91,9 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
     // Buffer size calculations and creation
     eprintln!("device.limits() = {:#?}", device.limits());
     let group_x = device.limits().max_compute_workgroups_per_dimension;
-    let group_y = 4;
+    let group_y = 1;
     let result_buffer_size =
-        std::mem::size_of::<u32>() as u64 * 256 / 4 * group_x as u64 * group_y as u64;
+        std::mem::size_of::<u32>() as u64 * 256 * group_x as u64 * group_y as u64;
     let result_matrix_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: result_buffer_size,
@@ -91,20 +105,30 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
     let mut max_result = String::new();
 
     for i in 0..10 {
-        let first_matrix: Vec<u32> = format!("{input_string}{i}-")
-            .as_bytes()
-            .iter()
-            .map(|&x| x as u32)
-            .collect();
-
-        let first_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let suffix_buff = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&first_matrix),
+            contents: bytemuck::cast_slice(
+                &suffix
+                    .as_bytes()
+                    .iter()
+                    .map(|a| *a as u32)
+                    .collect::<Vec<_>>(),
+            ),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let mut initial_ctx = Sha256Ctx::default();
+        for n in format!("{prefix}{i}-").as_bytes().iter() {
+            sha256_push(&mut initial_ctx, *n as u32);
+        }
+
+        let initial_ctx_buff = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&initial_ctx.to_array()),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let size = [first_matrix.len() as u32];
-        let size_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let size = [suffix.len() as u32];
+        let suffix_size_buff = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&size),
             usage: wgpu::BufferUsages::STORAGE,
@@ -115,14 +139,18 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: first_matrix_buffer.as_entire_binding(),
+                    resource: initial_ctx_buff.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: size_buffer.as_entire_binding(),
+                    resource: suffix_buff.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
+                    resource: suffix_size_buff.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
                     resource: result_matrix_buffer.as_entire_binding(),
                 },
             ],
@@ -164,26 +192,10 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
         buffer_slice.map_async(wgpu::MapMode::Read, move |a| sender.send(a).unwrap());
         device.poll(wgpu::Maintain::Wait).panic_on_timeout();
         if let Ok(Ok(())) = receiver.recv_async().await {
-            // Gets contents of buffer
-            // let data = buffer_slice.get_mapped_range();
-            // // Since contents are got in bytes, this converts these bytes back to u32
-            // let result = bytemuck::cast_slice(&data).to_vec();
-
-            // // With the current interface, we have to make sure all mapped views are
-            // // dropped before we unmap the buffer.
-            // drop(data);
-            // staging_buffer.unmap(); // Unmaps buffer from memory
-            //                         // If you are familiar with C++ these 2 lines can be thought of similarly to:
-            //                         //   delete myPointer;
-            //                         //   myPointer = NULL;
-            //                         // It effectively frees the memory
-
-            // Returns data from buffer
             let data = buffer_slice.get_mapped_range();
-            let result_data: Vec<u8> = bytemuck::cast_slice(&data).to_vec();
+            let result_data: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
             drop(data);
             staging_buffer.unmap();
-            // eprintln!("result_data = {result_data:?}");
 
             let index_of_max_value = result_data
                 .iter()
@@ -212,8 +224,10 @@ async fn sha256(input_string: &str) -> Result<(String, u32), wgpu::Error> {
     Ok((max_result, max_diff as u32))
 }
 
+// [0,"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",1736674829,1,["nonce","","43"],"pow"]
+
 fn main() {
-    let input_string = "abc";
-    let (result, diff) = block_on(sha256(input_string)).unwrap();
+    let input_string = r#"[0,"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",1736674829,1,[["nonce",""#;
+    let (result, diff) = block_on(sha256(input_string, r#"","43"]],"pow"]"#)).unwrap();
     println!("Result: {}, Diff: {}", result, diff);
 }

@@ -1,31 +1,16 @@
 struct SHA256_CTX {
     data: array<u32, 64>,
     datalen: u32,
-    bitlen: array<u32, 2>,
+    bitlen: u32,
     state: array<u32, 8>,
-  };
+};
 
-@group(0) @binding(0) var<storage, read> input : array<u32>;
-@group(0) @binding(1) var<storage, read> inputSize : array<u32>;
-@group(0) @binding(2) var<storage, read_write> result : array<u32>;
+@group(0) @binding(0) var<storage, read> initial_ctx : SHA256_CTX;
+@group(0) @binding(1) var<storage, read> suffix : array<u32>;
+@group(0) @binding(2) var<storage, read> suffixSize : array<u32>;
+@group(0) @binding(3) var<storage, read_write> result : array<u32>;
 
 const SHA256_BLOCK_SIZE = 32u;
-
-fn log2_32(value: u32) -> u32 {
-  var v = value;
-    var tab32 = array<u32, 32> (
-     0u,  9u,  1u, 10u, 13u, 21u,  2u, 29u,
-    11u, 14u, 16u, 18u, 22u, 25u,  3u, 30u,
-     8u, 12u, 20u, 28u, 15u, 17u, 24u,  7u,
-    19u, 27u, 23u,  6u, 26u,  5u,  4u, 31u
-    );
-    v |= v >> 1u;
-    v |= v >> 2u;
-    v |= v >> 4u;
-    v |= v >> 8u;
-    v |= v >> 16u;
-    return tab32[(v*0x07C4ACDDu) >> 27u];
-}
 
 fn ROTLEFT(a: u32, b: u32) -> u32 {return (((a) << (b)) | ((a) >> (32u - (b))));}
 fn ROTRIGHT(a: u32, b: u32) -> u32 {return (((a) >> (b)) | ((a) << (32u - (b))));}
@@ -108,25 +93,13 @@ fn sha256_transform(ctx: ptr<function, SHA256_CTX>) {
 }
 
 fn sha256_push(ctx: ptr<function, SHA256_CTX>, n: u32) {
-  (*ctx).data[(*ctx).datalen] = n;
-        (*ctx).datalen++;
+    (*ctx).data[(*ctx).datalen] = n;
+    (*ctx).datalen++;
         if (*ctx).datalen == 64u {
             sha256_transform(ctx);
-
-            // if (*ctx).bitlen[0] > 0xffffffffu - (512u) {
-            //     (*ctx).bitlen[1]++;
-            // }
-            (*ctx).bitlen[0] += 512u;
-
-
+            (*ctx).bitlen += 512u;
             (*ctx).datalen = 0u;
         }
-}
-
-fn sha256_update(ctx: ptr<function, SHA256_CTX>, len: u32) {
-    for (var i: u32 = 0u; i < len; i++) {
-      sha256_push(ctx, input[i]);
-    }
 }
 
 fn sha256_final(ctx: ptr<function, SHA256_CTX>) {
@@ -135,7 +108,7 @@ fn sha256_final(ctx: ptr<function, SHA256_CTX>) {
     if (*ctx).datalen < 56u {
         (*ctx).data[i] = 0x80u;
         i++;
-        while i < 56u {
+        while i < 60u {
             (*ctx).data[i] = 0x00u;
             i++;
         }
@@ -147,26 +120,15 @@ fn sha256_final(ctx: ptr<function, SHA256_CTX>) {
             i++;
         }
         sha256_transform(ctx);
-        for (i = 0u; i < 56u ; i++) {
+        for (i = 0u; i < 60u ; i++) {
             (*ctx).data[i] = 0u;
         }
     }
-
-
-    // if (*ctx).bitlen[0] > 0xffffffffu - (*ctx).datalen * 8u {
-    //     (*ctx).bitlen[1]++;
-    // }
-    (*ctx).bitlen[0] += (*ctx).datalen * 8u;
-
-
-    (*ctx).data[63] = (*ctx).bitlen[0];
-    (*ctx).data[62] = (*ctx).bitlen[0] >> 8u;
-    (*ctx).data[61] = (*ctx).bitlen[0] >> 16u;
-    (*ctx).data[60] = (*ctx).bitlen[0] >> 24u;
-    // (*ctx).data[59] = (*ctx).bitlen[1];
-    // (*ctx).data[58] = (*ctx).bitlen[1] >> 8u;
-    // (*ctx).data[57] = (*ctx).bitlen[1] >> 16u;
-    // (*ctx).data[56] = (*ctx).bitlen[1] >> 24u;
+    (*ctx).bitlen += (*ctx).datalen * 8u;
+    (*ctx).data[63] = (*ctx).bitlen;
+    (*ctx).data[62] = (*ctx).bitlen >> 8u;
+    (*ctx).data[61] = (*ctx).bitlen >> 16u;
+    (*ctx).data[60] = (*ctx).bitlen >> 24u;
     sha256_transform(ctx);
 }
 
@@ -178,11 +140,19 @@ fn push_string(ctx: ptr<function, SHA256_CTX>, n: u32) {
   }
 }
 
+fn push_string_short(ctx: ptr<function, SHA256_CTX>, n: u32) {
+  var m = n;
+  for (var i = 0u; i < 3u; i++) {
+    sha256_push(ctx, m % 10u + 48u);
+    m /= 10u;
+  }
+}
+
 fn leading_zeros(ctx: ptr<function, SHA256_CTX>) -> u32 {
     var zeros = 0u;
     for (var i = 0u; i < 8u; i++) {
       let n = (*ctx).state[i];
-      let z = 32u - log2_32(n);
+      let z = countLeadingZeros(n);
       zeros += z;
       if z != 32 {
         return zeros;
@@ -191,56 +161,26 @@ fn leading_zeros(ctx: ptr<function, SHA256_CTX>) -> u32 {
     return zeros;
 }
 
-fn copy_ctx(ctx_dist: ptr<function, SHA256_CTX>, ctx_src: ptr<function, SHA256_CTX>) {
-    var i: u32;
-    for (i = 0u; i < 64u; i++) {
-        (*ctx_dist).data[i] = (*ctx_src).data[i];
+fn i_to_leading_zeros(i: u32) -> u32 {
+    var ctx: SHA256_CTX = initial_ctx;
+    push_string(&ctx, i);
+    for (var i = 1u; i < suffixSize[0]; i++) {
+        sha256_push(&ctx, suffix[i]);
     }
-    (*ctx_dist).datalen = (*ctx_src).datalen;
-    (*ctx_dist).bitlen[0] = (*ctx_src).bitlen[0];
-    for (i = 0u; i < 8u; i++) {
-        (*ctx_dist).state[i] = (*ctx_src).state[i];
-    }
+    sha256_final(&ctx);
+    return leading_zeros(&ctx);
 }
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    var ctx: SHA256_CTX;
-    // var ctx_copy: SHA256_CTX;
-    // var buf: array<u32, SHA256_BLOCK_SIZE>;
-
-    // CTX INIT
-    ctx.datalen = 0u;
-    ctx.bitlen[0] = 0u;
-    // ctx.bitlen[1] = 0u;
-    ctx.state[0] = 0x6a09e667u;
-    ctx.state[1] = 0xbb67ae85u;
-    ctx.state[2] = 0x3c6ef372u;
-    ctx.state[3] = 0xa54ff53au;
-    ctx.state[4] = 0x510e527fu;
-    ctx.state[5] = 0x9b05688cu;
-    ctx.state[6] = 0x1f83d9abu;
-    ctx.state[7] = 0x5be0cd19u;
+    // let w = 8u;
+    // let i = global_id.x + global_id.y * 256 * 65535;
+    // var r = 0u;
+    // for (var j = 0u; j < w; j++) {
+    //     r = max(r, i_to_leading_zeros(i, j));
+    // }
+    // result[i] = r;
 
     let i = global_id.x + global_id.y * 256 * 65535;
-
-    sha256_update(&ctx, inputSize[0]);
-    push_string(&ctx, i);
-    sha256_final(&ctx);
-    result[i / 4] |= leading_zeros(&ctx) << (i % 4) * 8;
-    // // sha256_push(&ctx, 58u);
-    
-    // var m = 0u;
-    // for (var j = 0u; j < 16; j++) {
-    //   // ctx_copy = ctx;
-    //   copy_ctx(&ctx_copy, &ctx);
-    //   // push_string(&ctx, j);
-    //   sha256_final(&ctx);
-    //   let n = leading_zeros(&ctx);
-    //   if n > m {
-    //     m = n;
-    //   }
-    // }
-    
-    // result[i / 4] |= n << ((i % 4) * 8);
+    result[i] = i_to_leading_zeros(i);
 }
