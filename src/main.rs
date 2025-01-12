@@ -207,10 +207,8 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
     Ok((max_result, max_diff as u32))
 }
 
-// [0,"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",1736674829,1,["nonce","","43"],"pow"]
-
 fn main() {
-    let input_string = r#"[0,"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",1736674829,1,[["nonce",""#;
+    let input_string = r#"[0,"e617b3f97a9d759670b225575499da41ff5af4bc1336f71e3bbf0ed94a6af3f5",1736674829,1,[["nonce",""#;
     let (result, diff) = block_on(sha256(input_string, r#"","43"]],"pow"]"#)).unwrap();
     println!("Result: {}, Diff: {}", result, diff);
 }
