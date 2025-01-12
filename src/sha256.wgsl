@@ -7,8 +7,8 @@ struct SHA256_CTX {
 
 @group(0) @binding(0) var<storage, read> initial_ctx : SHA256_CTX;
 @group(0) @binding(1) var<storage, read> suffix : array<u32>;
-@group(0) @binding(2) var<storage, read> suffixSize : array<u32>;
-@group(0) @binding(3) var<storage, read_write> result : array<u32>;
+@group(0) @binding(2) var<storage, read> suffixSize : array<u32, 1>;
+@group(0) @binding(3) var<storage, read_write> result : array<u32, 1>;
 
 const SHA256_BLOCK_SIZE = 32u;
 
@@ -161,9 +161,10 @@ fn leading_zeros(ctx: ptr<function, SHA256_CTX>) -> u32 {
     return zeros;
 }
 
-fn i_to_leading_zeros(i: u32) -> u32 {
+fn i_to_leading_zeros(i: u32, j: u32) -> u32 {
     var ctx: SHA256_CTX = initial_ctx;
     push_string(&ctx, i);
+    push_string_short(&ctx, j);
     for (var i = 1u; i < suffixSize[0]; i++) {
         sha256_push(&ctx, suffix[i]);
     }
@@ -173,14 +174,17 @@ fn i_to_leading_zeros(i: u32) -> u32 {
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // let w = 8u;
-    // let i = global_id.x + global_id.y * 256 * 65535;
-    // var r = 0u;
-    // for (var j = 0u; j < w; j++) {
-    //     r = max(r, i_to_leading_zeros(i, j));
-    // }
-    // result[i] = r;
-
+    let w = 2u;
     let i = global_id.x + global_id.y * 256 * 65535;
-    result[i] = i_to_leading_zeros(i);
+    var r = 0u;
+    for (var j = 0u; j < w; j++) {
+        if i_to_leading_zeros(i, j) > 30 {
+            result[0] = 1u;
+        }
+    }
+
+    // let i = global_id.x + global_id.y * 256 * 65535;
+    // if i_to_leading_zeros(i) > 30 {
+    //     result[0] = 1u;
+    // }
 }

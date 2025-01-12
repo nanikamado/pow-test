@@ -92,19 +92,12 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
     eprintln!("device.limits() = {:#?}", device.limits());
     let group_x = device.limits().max_compute_workgroups_per_dimension;
     let group_y = 1;
-    let result_buffer_size =
-        std::mem::size_of::<u32>() as u64 * 256 * group_x as u64 * group_y as u64;
-    let result_matrix_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: result_buffer_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
+    let result_buffer_size = std::mem::size_of::<u32>() as u64;
 
-    let mut max_diff = 0;
-    let mut max_result = String::new();
+    let max_diff = 0;
+    let max_result = String::new();
 
-    for i in 0..10 {
+    for i in 0..100 {
         let suffix_buff = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(
@@ -132,6 +125,13 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
             label: None,
             contents: bytemuck::cast_slice(&size),
             usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let result_matrix_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: result_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -196,25 +196,8 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
             let result_data: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
             drop(data);
             staging_buffer.unmap();
-
-            let index_of_max_value = result_data
-                .iter()
-                .enumerate()
-                .max_by_key(|&(_, &x)| x)
-                .map(|(index, _)| index)
-                .unwrap();
-
-            if result_data[index_of_max_value] > max_diff {
-                max_diff = result_data[index_of_max_value];
-                max_result = format!(
-                    "{}-{}",
-                    i,
-                    format!("{:0>10}", index_of_max_value)
-                        .chars()
-                        .rev()
-                        .collect::<String>()
-                );
-                println!("Current: {}, Diff: {}", max_result, max_diff);
+            if result_data[0] == 1 {
+                eprintln!("found in {i}");
             }
         } else {
             panic!("failed to run compute on gpu!")
