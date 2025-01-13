@@ -92,10 +92,10 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
     eprintln!("device.limits() = {:#?}", device.limits());
     let group_x = device.limits().max_compute_workgroups_per_dimension;
     let group_y = 1;
-    let result_buffer_size = std::mem::size_of::<u32>() as u64;
+    let result_buffer_size = std::mem::size_of::<u32>() as u64 * 256;
 
-    let max_diff = 0;
-    let max_result = String::new();
+    let mut max_diff = 0;
+    let mut max_result = String::new();
 
     for i in 0..100 {
         let suffix_buff = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -196,8 +196,21 @@ async fn sha256(prefix: &str, suffix: &str) -> Result<(String, u32), wgpu::Error
             let result_data: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
             drop(data);
             staging_buffer.unmap();
-            if result_data[0] == 1 {
-                eprintln!("found in {i}");
+            let (leading_zeros, n) = result_data
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| **n > 0)
+                .next_back()
+                .unwrap();
+            if max_diff < leading_zeros {
+                max_diff = leading_zeros;
+                eprintln!("found in {leading_zeros}");
+                max_result = format!(
+                    "{}-{}",
+                    i,
+                    format!("{:0>10}", *n - 1).chars().rev().collect::<String>()
+                );
+                println!("Current: {}, Diff: {}", max_result, max_diff);
             }
         } else {
             panic!("failed to run compute on gpu!")
